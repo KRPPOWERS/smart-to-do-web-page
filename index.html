@@ -697,9 +697,11 @@ function togNotif(){id('notif-tog').classList.toggle('on');if(id('notif-tog').cl
 function togSync(){id('sync-tog').classList.toggle('on');saveSets();}
 function updSyncLbl(){var url=id('sh-url').value,en=id('sync-tog').classList.contains('on');id('sync-lbl').textContent=en?'Auto-sync enabled ✔':'Sync disabled';}
 
-// ── Sheets Sync (no-cors fix for Google Apps Script) ──
-function syncSheets(){
-  var url=SHEETS_URL; if(!url)return;
+// ── Sheets Sync (bidirectional) ──────────────────────────────
+
+// PUSH local → Sheets
+function pushToSheets(){
+  var url=SHEETS_URL; if(!url) return Promise.resolve();
   var rows=tasks.map(function(t){return{
     id:t.id,title:t.title,description:t.description||'',
     priority:t.priority,category:t.category,deadline:t.deadline||'',
@@ -708,18 +710,69 @@ function syncSheets(){
     subtasks:JSON.stringify(t.subtasks||[]),recurring:t.recurring||'',
     notes:t.notes||'',updatedAt:new Date().toISOString()
   };});
-  fetch(url,{
-    method:'POST',
-    mode:'no-cors',
+  return fetch(url,{
+    method:'POST', mode:'no-cors',
     headers:{'Content-Type':'text/plain'},
     body:JSON.stringify({action:'sync',rows:rows})
-  })
-  .then(function(){toast('\u2601 Synced to Google Sheets!');})
-  .catch(function(e){toast('\u26a0 Network error: '+e.message);});
+  }).catch(function(){});
 }
+
+// PULL Sheets → local and merge
+function pullFromSheets(){
+  var url=SHEETS_URL; if(!url) return Promise.resolve();
+  return fetch(url+'?action=get&cb='+Date.now())
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(!data||!data.rows||!data.rows.length) return;
+      var remote=data.rows.filter(function(r){return r.id;}).map(function(r){
+        return{
+          id:r.id, title:r.title||'', description:r.description||'',
+          priority:r.priority||'medium', category:r.category||'other',
+          deadline:r.deadline||null, completed:r.completed==='TRUE',
+          completedAt:r.completedAt||null,
+          createdAt:r.createdAt||new Date().toISOString(),
+          tags:r.tags?r.tags.split(',').map(function(s){return s.trim();}).filter(Boolean):[],
+          subtasks:(function(){try{return JSON.parse(r.subtasks||'[]');}catch(e){return[];}}()),
+          recurring:r.recurring||null, notes:r.notes||'',
+          photos:[], voices:[], updatedAt:r.updatedAt||''
+        };
+      });
+      // Merge: newest updatedAt wins
+      var map={};
+      tasks.forEach(function(t){map[t.id]=t;});
+      remote.forEach(function(r){
+        var local=map[r.id];
+        if(!local){
+          map[r.id]=r;
+        } else {
+          var rt=new Date(r.updatedAt||0).getTime();
+          var lt=new Date(local.updatedAt||local.createdAt||0).getTime();
+          if(rt>lt){
+            r.photos=local.photos||[];
+            r.voices=local.voices||[];
+            map[r.id]=r;
+          }
+        }
+      });
+      tasks=Object.values(map).sort(function(a,b){
+        return new Date(b.createdAt)-new Date(a.createdAt);
+      });
+      save(); renderTasks();
+    })
+    .catch(function(e){console.warn('Pull error:',e.message);});
+}
+
+// Full sync: pull first (get latest), then push (save local)
+function syncSheets(){
+  pullFromSheets().then(function(){ pushToSheets(); }).catch(function(){ pushToSheets(); });
+}
+
 function manualSync(){
-  toast('⏳ Syncing...');
-  setTimeout(syncSheets,100);
+  toast('\u23f3 Syncing...');
+  pullFromSheets()
+    .then(function(){ return pushToSheets(); })
+    .then(function(){ toast('\u2601 Synced! Tasks updated across all devices.'); })
+    .catch(function(e){ toast('\u26a0 Sync error - check internet'); });
 }
 
 // ── Export/Clear ──
@@ -742,6 +795,14 @@ window.addEventListener('load',function(){
   if(typeof Notification!=='undefined'&&Notification.permission==='default')Notification.requestPermission();
   if(streak.current>1)id('streak-line').textContent='🔥 '+streak.current+' day streak!';
   if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
+  // Pull from Sheets on every app open so all devices stay in sync
+  setTimeout(function(){
+    pullFromSheets().then(function(){
+      toast('\u2601 Tasks synced from cloud');
+      pushToSheets();
+    }).catch(function(){});
+  }, 1500);
+  // Auto bidirectional sync every 30 seconds
   setInterval(function(){if(sets.sync)syncSheets();},30000);
 });
 </script>
