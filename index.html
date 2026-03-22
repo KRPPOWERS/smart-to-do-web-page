@@ -407,6 +407,7 @@ button:active{opacity:0.7}
 
 <script>
 // ── State ──
+var SHEETS_URL = 'https://script.google.com/macros/s/AKfycbx4VAG84-xZxPOsZFTS7X--zpzy0IyUeoAJnPwtDEc9i3JUe-fo07XzK7BLO-mBBefNoA/exec';
 var tasks=[],sets={},streak={current:0,best:0,lastDate:null};
 var filt='all',ePhotos=[],eVoices=[],eSubs=[];
 var mRec=null,aChunks=[];
@@ -425,7 +426,7 @@ function load(){
   applySets();
 }
 function saveSets(){
-  sets.url=id('sh-url').value;
+  sets.url=SHEETS_URL;
   sets.sync=id('sync-tog').classList.contains('on');
   sets.notif=id('notif-tog').classList.contains('on');
   sets.rm=+id('r-mins').value||30;
@@ -437,7 +438,7 @@ function saveSets(){
   updSyncLbl();
 }
 function applySets(){
-  if(sets.url) id('sh-url').value=sets.url;
+  id('sh-url').value=SHEETS_URL;
   if(sets.sync) id('sync-tog').classList.add('on');
   if(sets.notif) id('notif-tog').classList.add('on');
   if(sets.rm) id('r-mins').value=sets.rm;
@@ -597,14 +598,14 @@ function saveTask(){
     createdAt:ex?ex.createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
   if(eid)tasks=tasks.map(function(t){return t.id===eid?td:t;});else tasks.unshift(td);
   save();if(dl)schedNotif(td);closeM('add-modal');renderTasks();toast(eid?'✅ Updated':'✅ Task added');
-  if(sets.sync&&sets.url)syncSheets();
+  if(sets.sync)syncSheets();
 }
-function delTask(id2){if(!confirm('Delete this task?'))return;tasks=tasks.filter(function(t){return t.id!==id2;});save();renderTasks();toast('🗑 Deleted');if(sets.sync&&sets.url)syncSheets();}
+function delTask(id2){if(!confirm('Delete this task?'))return;tasks=tasks.filter(function(t){return t.id!==id2;});save();renderTasks();toast('🗑 Deleted');if(sets.sync)syncSheets();}
 function togDone(id2){
   tasks=tasks.map(function(t){if(t.id!==id2)return t;var d=!t.completed;if(d)updStreak();return Object.assign({},t,{completed:d,completedAt:d?new Date().toISOString():null});});
   save();renderTasks();
   var t=tasks.find(function(x){return x.id===id2;});if(t&&t.completed)toast('🎉 Completed!');
-  if(sets.sync&&sets.url)syncSheets();
+  if(sets.sync)syncSheets();
 }
 
 // ── Detail ──
@@ -694,11 +695,11 @@ function pushNotif(title,body){if(typeof Notification!=='undefined'&&Notificatio
 function schedNotif(t){if(!sets.notif||typeof Notification==='undefined')return;if(Notification.permission!=='granted'){Notification.requestPermission();return;}var dl=new Date(t.deadline),delay=dl.getTime()-(sets.rm||30)*60000-Date.now();if(delay>0)setTimeout(function(){pushNotif('⏰ '+t.title,'Due in '+(sets.rm||30)+' min!');},delay);var dn=dl.getTime()-Date.now();if(dn>0)setTimeout(function(){pushNotif('🚨 '+t.title,'Due NOW!');},dn);}
 function togNotif(){id('notif-tog').classList.toggle('on');if(id('notif-tog').classList.contains('on')&&typeof Notification!=='undefined'&&Notification.permission==='default')Notification.requestPermission();saveSets();}
 function togSync(){id('sync-tog').classList.toggle('on');saveSets();}
-function updSyncLbl(){var url=id('sh-url').value,en=id('sync-tog').classList.contains('on');id('sync-lbl').textContent=!url?'Paste your Apps Script URL below':en?'Auto-sync enabled':'Sync disabled';}
+function updSyncLbl(){var url=id('sh-url').value,en=id('sync-tog').classList.contains('on');id('sync-lbl').textContent=en?'Auto-sync enabled ✔':'Sync disabled';}
 
 // ── Sheets Sync (no-cors fix for Google Apps Script) ──
 function syncSheets(){
-  var url=sets.url; if(!url)return;
+  var url=SHEETS_URL; if(!url)return;
   var rows=tasks.map(function(t){return{
     id:t.id,title:t.title,description:t.description||'',
     priority:t.priority,category:t.category,deadline:t.deadline||'',
@@ -717,8 +718,7 @@ function syncSheets(){
   .catch(function(e){toast('\u26a0 Network error: '+e.message);});
 }
 function manualSync(){
-  if(!sets.url){toast('\u26a0 Set Sheets URL in Settings first');return;}
-  toast('\u23f3 Syncing...');
+  toast('⏳ Syncing...');
   setTimeout(syncSheets,100);
 }
 
@@ -728,11 +728,21 @@ function clearAll(){if(!confirm('Delete everything?'))return;if(!confirm('Are yo
 
 // ── Boot ──
 window.addEventListener('load',function(){
-  load();renderTasks();updTimer();renderDots();
+  load();
+  // Hardwired Google Sheets URL — always set on boot
+  sets.url = SHEETS_URL;
+  sets.sync = true;
+  id('sh-url').value = SHEETS_URL;
+  id('sh-url').readOnly = true;
+  id('sh-url').style.opacity = '0.6';
+  id('sync-tog').classList.add('on');
+  try{localStorage.setItem('st_s',JSON.stringify(sets));}catch(e){}
+  updSyncLbl();
+  renderTasks();updTimer();renderDots();
   if(typeof Notification!=='undefined'&&Notification.permission==='default')Notification.requestPermission();
   if(streak.current>1)id('streak-line').textContent='🔥 '+streak.current+' day streak!';
   if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
-  setInterval(function(){if(sets.sync&&sets.url)syncSheets();},30000);
+  setInterval(function(){if(sets.sync)syncSheets();},30000);
 });
 </script>
 </body>
